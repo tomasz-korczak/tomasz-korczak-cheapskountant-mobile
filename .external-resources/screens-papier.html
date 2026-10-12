@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cheapskountant — ekrany, motyw Papier</title>
+  <style>
+    :root {
+      --bg: #F3EEE4;
+      --surface: #FFFCF7;
+      --ink: #1C1917;
+      --muted: #57534E;
+      --primary: #115E59;
+      --on-primary: #FFFFFF;
+      --container: #D7EDEB;
+      --track: #E8E0D2;
+      --line: #E4D9C8;
+      --outline: #A8A29E;
+      --food: #1D4ED8;
+      --transport: #B45309;
+      --home: #0F766E;
+      --health: #6D28D9;
+      --other: #78716C;
+      --desk: #E4DDD2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--desk);
+      color: var(--ink);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.35;
+    }
+    .page { padding: 28px 24px 48px; }
+    h1 { margin: 0 0 8px; font-size: 22px; font-weight: 500; }
+    .lead { margin: 0 0 24px; max-width: 78ch; color: var(--muted); }
+    .board {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 28px 24px;
+      align-items: flex-start;
+    }
+    .slot { width: 340px; }
+    .slot h2 { margin: 0 0 8px; font-size: 15px; font-weight: 500; }
+    .caption { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+    .phone {
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 16px 14px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-shadow: 0 8px 24px rgba(28, 25, 23, 0.08);
+    }
+    .bar, .row, .photo, .split, .datebtn, .monthbtn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .bar { justify-content: flex-start; min-height: 36px; }
+    .title { font-weight: 500; }
+    .iconbtn {
+      width: 36px;
+      height: 36px;
+      flex: none;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--ink);
+      display: grid;
+      place-items: center;
+      padding: 0;
+    }
+    .monthbtn, .datebtn {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      padding: 0;
+      justify-content: space-between;
+    }
+    .monthbtn { font-weight: 500; font-size: 18px; }
+    .kicker { margin: 0; color: var(--muted); font-size: 12px; }
+    .amount {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.03em;
+    }
+    .currency { margin: -4px 0 2px; color: var(--muted); font-size: 12px; }
+    .cat { display: grid; grid-template-columns: 5.4rem 1fr 2.4rem; gap: 8px; align-items: center; font-size: 13px; }
+    .cat b { font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
+    .track { height: 8px; background: var(--track); border-radius: 99px; }
+    .fill { display: block; height: 100%; border-radius: 99px; }
+    .food { background: var(--food); }
+    .transport { background: var(--transport); }
+    .home { background: var(--home); }
+    .health { background: var(--health); }
+    .other { background: var(--other); }
+    button.primary, button.ghost, button.plus {
+      font: inherit;
+      border-radius: 14px;
+      min-height: 44px;
+      padding: 10px 12px;
+    }
+    button.primary {
+      border: 0;
+      background: var(--primary);
+      color: var(--on-primary);
+      font-weight: 500;
+    }
+    button.ghost {
+      border: 1px solid var(--primary);
+      background: var(--surface);
+      color: var(--primary);
+      font-weight: 500;
+    }
+    .stack { display: flex; flex-direction: column; gap: 8px; }
+    .sheet, .card, .photo {
+      background: var(--surface);
+      border-radius: 12px;
+    }
+    .photo { padding: 8px; }
+    .sheet { padding: 2px 12px; }
+    .entry {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 0;
+    }
+    .entry + .entry { border-top: 1px solid var(--line); }
+    .who { display: flex; flex-direction: column; gap: 2px; }
+    .money { font-variant-numeric: tabular-nums; font-weight: 500; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .card { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+    .card.selected { background: var(--container); }
+    .headrow { display: flex; align-items: center; gap: 8px; }
+    .headrow.end { justify-content: flex-end; }
+    .headrow .name { flex: 1; font-weight: 500; }
+    .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+    .fact { display: flex; flex-direction: column; gap: 1px; }
+    .check { width: 18px; height: 18px; accent-color: var(--primary); margin: 0; }
+    label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+    input[type="text"], select {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--outline);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--ink);
+      font: inherit;
+      font-size: 14px;
+      padding: 8px 10px;
+    }
+    select {
+      appearance: none;
+      background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+      background-position: calc(100% - 16px) 17px, calc(100% - 11px) 17px;
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+      padding-right: 28px;
+    }
+    .meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+    .meta .filename { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .thumb {
+      width: 42px;
+      height: 54px;
+      flex: none;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 8px 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .thumb i { display: block; height: 3px; background: #D6D3D1; border-radius: 99px; }
+    .thumb i:nth-child(2) { width: 70%; }
+    .count { margin: 0; }
+    .plus {
+      width: 44px;
+      align-self: center;
+      border: 1px solid var(--primary);
+      background: var(--surface);
+      color: var(--primary);
+      display: grid;
+      place-items: center;
+      padding: 0;
+    }
+    .header-copy { display: flex; flex-direction: column; gap: 2px; }
+    .header-copy strong { font-size: 16px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>Motyw Papier</h1>
+    <p class="lead">Październik 2026 jest w całości w PLN, więc suma i procenty są w jednej walucie, bez przeliczania. Na liście dnia paragon to sklep i suma, a wydatek ręczny to kategoria i kwota. Kategorie na listach są przykładowe. Rabat jest kwotą ujemną.</p>
+    <div class="board">
+      <section class="slot" aria-labelledby="s1">
+        <h2 id="s1">1. Ekran główny</h2>
+        <div class="phone">
+          <button class="monthbtn" type="button">
+            <span>Październik 2026</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+          </button>
+          <p class="kicker">Wydatki</p>
+          <p class="amount">1&nbsp;284,50&nbsp;zł</p>
+          <p class="currency">PLN</p>
+          <div class="cat"><span>Żywność</span><span class="track"><span class="fill food" style="width:46%"></span></span><b>46%</b></div>
+          <div class="cat"><span>Transport</span><span class="track"><span class="fill transport" style="width:28%"></span></span><b>28%</b></div>
+          <div class="cat"><span>Dom</span><span class="track"><span class="fill home" style="width:15%"></span></span><b>15%</b></div>
+          <div class="cat"><span>Zdrowie</span><span class="track"><span class="fill health" style="width:7%"></span></span><b>7%</b></div>
+          <div class="cat"><span>Inne</span><span class="track"><span class="fill other" style="width:4%"></span></span><b>4%</b></div>
+          <div class="stack">
+            <button class="primary" type="button">Zdjęcie paragonu</button>
+            <button class="ghost" type="button">Wpisz wydatek</button>
+          </div>
+          <button class="datebtn" type="button">
+            <span>12 października 2026</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+          </button>
+          <div class="sheet">
+            <div class="entry">
+              <span class="who"><span>Biedronka</span><span class="muted">Paragon</span></span>
+              <span class="money">44,87&nbsp;zł</span>
+            </div>
+            <div class="entry">
+              <span class="who"><span>Transport</span><span class="muted">Wydatek</span></span>
+              <span class="money">240,00&nbsp;zł</span>
+            </div>
+            <div class="entry">
+              <span class="who"><span>Żywność</span><span class="muted">Wydatek</span></span>
+              <span class="money">32,00&nbsp;zł</span>
+            </div>
+          </div>
+        </div>
+        <p class="caption">Miesiąc i dzień otwierają kalendarz. Suma miesiąca nie jest sumą tego jednego dnia.</p>
+      </section>
+
+      <section class="slot" aria-labelledby="s2">
+        <h2 id="s2">2. Zdjęcie paragonu</h2>
+        <div class="phone">
+          <div class="bar">
+            <button class="iconbtn" type="button" aria-label="Wróć">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+            </button>
+            <span class="title">Zdjęcie paragonu</span>
+          </div>
+          <div class="stack">
+            <button class="ghost" type="button">Zrób zdjęcie</button>
+            <button class="ghost" type="button">Wybierz z galerii</button>
+          </div>
+          <p class="count muted">2 z 5 zdjęć tego paragonu</p>
+          <div class="photo">
+            <div class="thumb" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <span class="meta"><span class="filename">paragon-1.jpg</span><span class="muted">1,4 MB</span></span>
+            <button class="iconbtn" type="button" aria-label="Usuń zdjęcie">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M8 7l1 13h6l1-13"/></svg>
+            </button>
+          </div>
+          <div class="photo">
+            <div class="thumb" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+            <span class="meta"><span class="filename">paragon-2.jpg</span><span class="muted">980 KB</span></span>
+            <button class="iconbtn" type="button" aria-label="Usuń zdjęcie">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M8 7l1 13h6l1-13"/></svg>
+            </button>
+          </div>
+          <button class="primary" type="button">Wyślij</button>
+        </div>
+        <p class="caption">Wyślij przekazuje zdjęcia i otwiera edycję paragonu. Strzałka wraca na ekran główny.</p>
+      </section>
+
+      <section class="slot" aria-labelledby="s3">
+        <h2 id="s3">3. Edycja paragonu</h2>
+        <div class="phone">
+          <div class="bar">
+            <button class="iconbtn" type="button" aria-label="Anuluj">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+            </button>
+            <span class="title">Paragon</span>
+          </div>
+          <div class="card">
+            <div class="header-copy">
+              <strong>Biedronka</strong>
+              <span class="muted">12 października 2026 · PLN</span>
+            </div>
+            <span class="money">Suma 44,87&nbsp;zł</span>
+          </div>
+          <article class="card">
+            <div class="headrow">
+              <input class="check" type="checkbox" aria-label="Zaznacz Mleko 3,2%">
+              <span class="name">Mleko 3,2%</span>
+              <button class="iconbtn" type="button" aria-label="Usuń pozycję">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M8 7l1 13h6l1-13"/></svg>
+              </button>
+            </div>
+            <div class="facts">
+              <span class="fact"><span class="muted">Kwota</span><span class="money">8,49&nbsp;zł</span></span>
+              <span class="fact"><span class="muted">Rabat</span><span class="muted">—</span></span>
+              <span class="fact"><span class="muted">Kategoria</span><span>Żywność</span></span>
+            </div>
+          </article>
+          <article class="card">
+            <div class="headrow">
+              <input class="check" type="checkbox" aria-label="Zaznacz Chleb wiejski">
+              <span class="name">Chleb wiejski</span>
+              <button class="iconbtn" type="button" aria-label="Usuń pozycję">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M8 7l1 13h6l1-13"/></svg>
+              </button>
+            </div>
+            <div class="facts">
+              <span class="fact"><span class="muted">Kwota</span><span class="money">5,49&nbsp;zł</span></span>
+              <span class="fact"><span class="muted">Rabat</span><span class="money">−1,00&nbsp;zł</span></span>
+              <span class="fact"><span class="muted">Kategoria</span><span>Żywność</span></span>
+            </div>
+          </article>
+          <article class="card">
+            <div class="headrow">
+              <input class="check" type="checkbox" aria-label="Zaznacz Płyn do naczyń">
+              <span class="name">Płyn do naczyń</span>
+              <button class="iconbtn" type="button" aria-label="Usuń pozycję">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M8 7l1 13h6l1-13"/></svg>
+              </button>
+            </div>
+            <div class="facts">
+              <span class="fact"><span class="muted">Kwota</span><span class="money">12,99&nbsp;zł</span></span>
+              <span class="fact"><span class="muted">Rabat</span><span class="muted">—</span></span>
+              <span class="fact"><span class="muted">Kategoria</span><span>Dom</span></span>
+            </div>
+          </article>
+          <article class="card selected">
+            <div class="headrow">
+              <input class="check" type="checkbox" checked aria-label="Zaznacz Ser gouda">
+              <span class="name">Ser gouda</span>
+              <button class="iconbtn" type="button" aria-label="Usuń pozycję">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M8 7l1 13h6l1-13"/></svg>
+              </button>
+            </div>
+            <div class="facts">
+              <span class="fact"><span class="muted">Kwota</span><span class="money">21,40&nbsp;zł</span></span>
+              <span class="fact"><span class="muted">Rabat</span><span class="money">−2,50&nbsp;zł</span></span>
+              <span class="fact"><span class="muted">Kategoria</span><span>Żywność</span></span>
+            </div>
+          </article>
+          <label class="field">Kategoria
+            <select aria-label="Kategoria dla zmiany">
+              <option>Żywność</option>
+              <option>Transport</option>
+              <option>Dom</option>
+              <option>Zdrowie</option>
+              <option>Inne</option>
+            </select>
+          </label>
+          <div class="stack">
+            <button class="ghost" type="button">Zmień zaznaczone</button>
+            <button class="ghost" type="button">Zmień wszystkie</button>
+            <button class="primary" type="button">Zapisz</button>
+          </div>
+        </div>
+        <p class="caption">Sklep, data, waluta i suma są tylko do odczytu. Pozycje zmieniają kategorię zbiorczo. Kosz usuwa wiersz. Strzałka porzuca zmiany.</p>
+      </section>
+
+      <section class="slot" aria-labelledby="s4">
+        <h2 id="s4">4. Wpisz wydatek</h2>
+        <div class="phone">
+          <div class="bar">
+            <button class="iconbtn" type="button" aria-label="Anuluj">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+            </button>
+            <span class="title">Wpisz wydatek</span>
+          </div>
+          <article class="card">
+            <div class="headrow end">
+              <button class="iconbtn" type="button" aria-label="Usuń pozycję">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M8 7l1 13h6l1-13"/></svg>
+              </button>
+            </div>
+            <label class="field">Opis
+              <input type="text" maxlength="100" value="Orlen">
+            </label>
+            <label class="field">Kwota
+              <input type="text" inputmode="decimal" value="240,00">
+            </label>
+            <label class="field">Data płatności
+              <input type="text" value="12.10.2026">
+            </label>
+            <label class="field">Waluta
+              <select>
+                <option selected>PLN</option>
+                <option>EUR</option>
+                <option>USD</option>
+              </select>
+            </label>
+            <label class="field">Kategoria
+              <select>
+                <option>Żywność</option>
+                <option selected>Transport</option>
+                <option>Dom</option>
+                <option>Zdrowie</option>
+                <option>Inne</option>
+              </select>
+            </label>
+          </article>
+          <article class="card">
+            <div class="headrow end">
+              <button class="iconbtn" type="button" aria-label="Usuń pozycję">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M8 7l1 13h6l1-13"/></svg>
+              </button>
+            </div>
+            <label class="field">Opis
+              <input type="text" maxlength="100" placeholder="Opcjonalnie">
+            </label>
+            <label class="field">Kwota
+              <input type="text" inputmode="decimal" value="32,00">
+            </label>
+            <label class="field">Data płatności
+              <input type="text" value="12.10.2026">
+            </label>
+            <label class="field">Waluta
+              <select>
+                <option selected>PLN</option>
+                <option>EUR</option>
+                <option>USD</option>
+              </select>
+            </label>
+            <label class="field">Kategoria
+              <select>
+                <option selected>Żywność</option>
+                <option>Transport</option>
+                <option>Dom</option>
+                <option>Zdrowie</option>
+                <option>Inne</option>
+              </select>
+            </label>
+          </article>
+          <button class="plus" type="button" aria-label="Dodaj wiersz">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <button class="primary" type="button">Zapisz</button>
+        </div>
+        <p class="caption">Opis nie trafia na listę dnia. Tam widać kategorię i kwotę. Plus dodaje wiersz na dole. Strzałka porzuca zmiany.</p>
+      </section>
+    </div>
+  </div>
+</body>
+</html>

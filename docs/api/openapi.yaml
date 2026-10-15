@@ -1,0 +1,1100 @@
+openapi: 3.1.0
+info:
+  title: Cheapskountant API
+  version: 1.0.0
+  summary: Kontrakt HTTP usługi paragonów i wydatków gospodarstwa domowego.
+  description: |
+    Dokument opisuje aktualnie zaimplementowane endpointy `cheapskountant-service`.
+    Jest przeznaczony dla aplikacji klienckiej: zawiera zastosowanie, parametry,
+    typy, ograniczenia, przykłady oraz odpowiedzi błędów.
+
+    Chronione endpointy wymagają nagłówka `Authorization: Bearer <API_KEY>`.
+    Wartość tokenu musi być równa zmiennej środowiskowej `API_KEY`. Prefiks
+    `Bearer ` jest porównywany dokładnie, łącznie z wielkością liter.
+
+    Błędy aplikacji mają treść JSON z polami `reason` i `explanation`.
+    Nieznane pola JSON są ignorowane i nie wracają w odpowiedzi.
+    Pola o wartości null są pomijane.
+
+    Usługa nie ustawia nagłówków CORS. Aplikacja przeglądarkowa na innej
+    domenie potrzebuje własnego proxy albo późniejszej konfiguracji CORS.
+
+    Kwoty paragonu są stringami z dwoma miejscami po kropce. Kwoty wydatków
+    są liczbami JSON, nie stringami.
+servers:
+  - url: http://192.168.0.30:8080
+    description: Lokalny proces na porcie 8080.
+tags:
+  - name: Receipts
+    description: Transkrypcja zdjęć paragonu i zapis ustrukturyzowanego paragonu.
+  - name: Expenses
+    description: Kategorie, zapis wydatków oraz odczyty podsumowań.
+  - name: Operations
+    description: Publiczna diagnostyka procesu.
+security:
+  - bearerAuth: []
+paths:
+  /api/transcription:
+    post:
+      operationId: transcribeReceipt
+      tags: [Receipts]
+      summary: Odczytuje jeden paragon ze zdjęć.
+      description: |
+        Przyjmuje od 1 do 5 zdjęć stron jednego polskiego paragonu fiskalnego,
+        w kolejności stron. Nie zapisuje paragonu ani wydatków i nie nadaje `id`.
+
+        Każda część formularza nazywa się `images` i ma najwyżej 10 MB.
+        Akceptowane typy to `image/jpeg`, `image/jpg`, `image/png` i `image/webp`.
+        Część bez typu mediów jest traktowana jak JPEG. Inny zadeklarowany typ
+        odrzuca całe żądanie, zanim model zostanie wywołany.
+
+        Sukces zwraca paragon bez `id`. Każda pozycja ma `category` równe `Unknown`,
+        bo zdjęcie nie zawiera kategorii gospodarstwa. `source.fileName` zawiera
+        niepuste nazwy przesłanych plików połączone przecinkiem i spacją.
+        Zdjęcia nie wchodzą do odpowiedzi.
+
+        Model ma 60 sekund. Przekroczenie budżetu zwraca HTTP 504. Awaria
+        dostawcy zwraca HTTP 503. W obu przypadkach `reason` to
+        `transcription unavailable`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TranscriptionRequest'
+            encoding:
+              images:
+                contentType: image/jpeg, image/jpg, image/png, image/webp
+      responses:
+        '200':
+          description: Paragon odczytany ze zdjęć. Nic nie zostało zapisane.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Receipt'
+              example:
+                documentType: fiscal_receipt
+                source:
+                  fileName: paragon-1.jpg
+                seller:
+                  tradeName: Sklep ABC
+                  taxId: '1234567890'
+                receipt:
+                  number: '1234'
+                  issuedAt: '2026-10-12T18:41:00+02:00'
+                  currency: PLN
+                items:
+                  - description: Mleko 3.2%
+                    quantity: 1
+                    unitPrice: '4.99'
+                    total: '4.99'
+                    taxCategory: A
+                    category: Unknown
+                taxSummary:
+                  - taxCategory: A
+                    taxRate: 23
+                    taxableSales: '4.06'
+                    taxAmount: '0.93'
+                totals:
+                  taxAmount: '0.93'
+                  grossAmount: '4.99'
+                  amountDue: '4.99'
+                payments:
+                  - method: card
+                    amount: '4.99'
+        '400':
+          description: |
+            Niepoprawne zgłoszenie. Model nie został wywołany.
+            Typowe `explanation`: `At least one receipt image is required.`,
+            `At most five images are allowed.`, `An image file is empty.`,
+            `An image exceeds 10 MB.`, `An image type is not supported.`,
+            `An image could not be read.`,
+            `Images must be sent as multipart form data.`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              example:
+                reason: invalid submission
+                explanation: At least one receipt image is required.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: |
+            Zdjęcia nie dały jednego kompletnego paragonu fiskalnego. Nic nie zapisano.
+            `reason` jest `unreadable` albo `incomplete`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              examples:
+                unreadable:
+                  value:
+                    reason: unreadable
+                    explanation: The images could not be read as one fiscal receipt.
+                incomplete:
+                  value:
+                    reason: incomplete
+                    explanation: The seller tax identifier is missing.
+        '503':
+          description: Dostawca transkrypcji nie odpowiedział.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              example:
+                reason: transcription unavailable
+                explanation: The transcription service did not respond.
+        '504':
+          description: Transkrypcja nie zakończyła się w 60 sekund.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              example:
+                reason: transcription unavailable
+                explanation: Transcription did not finish in time.
+  /api/receipt:
+    post:
+      operationId: createReceipt
+      tags: [Receipts]
+      summary: Zapisuje paragon i tworzy wydatek dla każdej pozycji.
+      description: |
+        Przyjmuje JSON jednego paragonu fiskalnego. Nie przyjmuje zdjęć i nie
+        wywołuje modelu. Przesłane `id` jest ignorowane. Po zapisie odpowiedź
+        zawiera nowe `id`.
+
+        Zapis i utworzenie wydatków dzieją się w jednej transakcji. Dla każdej
+        pozycji powstaje dokładnie jeden wydatek:
+
+        - kwota to `items[].total` plus opcjonalne `items[].discount.total`;
+          brak rabatu pozycji oznacza zero, a rabat jest ujemny;
+        - `discountSummary` całego paragonu nie jest rozdzielany na wydatki;
+        - data płatności to lokalna data z `receipt.issuedAt`, bez przeliczenia strefy;
+        - waluta to `receipt.currency`;
+        - opis wydatku jest pusty;
+        - kategoria to nazwa z pozycji.
+
+        `receipt.issuedAt` jest zapisywany jako data i czas lokalny. W odpowiedzi
+        ta sama wartość wraca z offsetem `Z`, bez przesunięcia zegara.
+        Przykład: `2026-10-12T18:41:00+02:00` wraca jako `2026-10-12T18:41:00Z`,
+        a wydatek dostaje datę `2026-10-12`.
+
+        Kategoria pozycji musi być dokładnie `Unknown` albo jedną z 34 nazw
+        gospodarstwa. Brak albo inna nazwa daje HTTP 422 i nie zapisuje niczego.
+        Nazwa nie jest podmieniana na `Unknown`.
+
+        Pozycja, której kwota wydatku wychodzi poza `-999999.99` do `999999.99`,
+        odrzuca cały paragon z HTTP 400. Nic nie zostaje zapisane.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Receipt'
+            example:
+              documentType: fiscal_receipt
+              seller:
+                tradeName: Sklep ABC
+                taxId: '1234567890'
+              receipt:
+                number: '1234'
+                issuedAt: '2026-10-12T18:41:00+02:00'
+                currency: PLN
+              items:
+                - description: Mleko 3.2%
+                  quantity: 1
+                  unitPrice: '4.99'
+                  total: '4.99'
+                  taxCategory: A
+                  category: Jedzenie
+              taxSummary:
+                - taxCategory: A
+                  taxRate: 23
+                  taxableSales: '4.06'
+                  taxAmount: '0.93'
+              totals:
+                taxAmount: '0.93'
+                grossAmount: '4.99'
+                amountDue: '4.99'
+              payments:
+                - method: card
+                  amount: '4.99'
+      responses:
+        '201':
+          description: |
+            Paragon został zapisany. Dla każdej pozycji powstał powiązany wydatek.
+            Treść odpowiedzi zawiera paragon, bez listy wydatków.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Receipt'
+              example:
+                id: 42
+                documentType: fiscal_receipt
+                seller:
+                  tradeName: Sklep ABC
+                  taxId: '1234567890'
+                receipt:
+                  number: '1234'
+                  issuedAt: '2026-10-12T18:41:00Z'
+                  currency: PLN
+                items:
+                  - description: Mleko 3.2%
+                    quantity: 1
+                    unitPrice: '4.99'
+                    total: '4.99'
+                    taxCategory: A
+                    category: Jedzenie
+                taxSummary:
+                  - taxCategory: A
+                    taxRate: 23
+                    taxableSales: '4.06'
+                    taxAmount: '0.93'
+                totals:
+                  taxAmount: '0.93'
+                  grossAmount: '4.99'
+                  amountDue: '4.99'
+                payments:
+                  - method: card
+                    amount: '4.99'
+        '400':
+          description: |
+            Niepoprawne zgłoszenie. Nic nie zapisano.
+            Typowe `explanation`: `A receipt body is required.`,
+            `A receipt must be sent as JSON.`,
+            `A receipt line amount does not fit an expense.`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              example:
+                reason: invalid submission
+                explanation: A receipt body is required.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: |
+            Paragon nie jest jednym kompletnym paragonem fiskalnym albo ma
+            nierozpoznaną kategorię. Nic nie zapisano.
+            `reason` jest `unreadable` albo `incomplete`.
+            Typowe wyjaśnienia `incomplete`: brak nazwy lub NIP sprzedawcy,
+            niepoprawny BDO, niekompletny adres, niekompletny nagłówek,
+            niepoprawna waluta, brak pozycji, niekompletna pozycja,
+            nierozpoznana kategoria, niekompletny rabat, podsumowanie VAT,
+            sumy albo płatność.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              examples:
+                incomplete:
+                  value:
+                    reason: incomplete
+                    explanation: The seller tax identifier is missing.
+                category:
+                  value:
+                    reason: incomplete
+                    explanation: A line item category is not recognized.
+                unreadable:
+                  value:
+                    reason: unreadable
+                    explanation: The images could not be read as one fiscal receipt.
+        '500':
+          description: Zapis nie powiódł się. Paragon i wygenerowane wydatki są wycofywane razem.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              example:
+                reason: storage failed
+                explanation: The receipt could not be saved.
+  /api/expense:
+    post:
+      operationId: storeExpenses
+      tags: [Expenses]
+      summary: Zapisuje listę wydatków.
+      description: |
+        Przyjmuje tablicę JSON od 1 do 500 wydatków. Limit dotyczy tego żądania.
+        Kolejne żądania mogą dodać więcej wydatków z tą samą datą.
+
+        Kategoria musi być dokładną nazwą gospodarstwa. `Unknown` oraz nazwa
+        różniąca się znakiem, spacją albo wielkością liter jest odrzucana.
+        Usługa zapisuje identyfikator pasującej kategorii, a w odpowiedzi
+        znowu pokazuje jej nazwę.
+
+        Jeden niepoprawny wydatek odrzuca całą tablicę. Poprawne elementy tego
+        żądania też nie są zapisywane. Pusta tablica, brak wymaganego pola,
+        więcej niż dwa miejsca po przecinku, kwota poza `-999999.99` do
+        `999999.99`, data inna niż rzeczywisty dzień `RRRR-MM-DD`, waluta
+        inna niż dokładnie trzy znaki, opis dłuższy niż 100 znaków albo opis
+        złożony z samych spacji odrzuca całość.
+
+        Pusty albo pominięty opis nie jest zapisywany i znika z odpowiedzi.
+        Waluta nie jest normalizowana: `eur` i `EUR` to różne wartości.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExpenseList'
+            example:
+              - amount: 12.5
+                paymentDate: '2026-10-12'
+                category: Jedzenie
+                currency: PLN
+                description: Warzywa
+      responses:
+        '201':
+          description: Każdy wydatek z żądania został zapisany. Kolejność odpowiada żądaniu.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExpenseList'
+              example:
+                - amount: 12.5
+                  paymentDate: '2026-10-12'
+                  category: Jedzenie
+                  currency: PLN
+                  description: Warzywa
+        '400':
+          description: |
+            Niepoprawne zgłoszenie. Nic z tej tablicy nie zostało zapisane.
+            Typowe `explanation`: `An expense list is required.`,
+            `At most 500 expenses can be stored at once.`,
+            `An expense is missing a required field.`,
+            `An expense amount has more than two decimal places.`,
+            `An expense amount is too large.`,
+            `An expense payment date is not a real calendar date.`,
+            `An expense category is not a household name.`,
+            `An expense currency must be three characters.`,
+            `An expense description is too long.`,
+            `An expense description must contain a character other than a space.`,
+            `The request body could not be read.`,
+            `A receipt must be sent as JSON.`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              example:
+                reason: invalid submission
+                explanation: An expense category is not a household name.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          description: Zapis nie powiódł się. Żaden wydatek z tego żądania nie pozostaje zapisany.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              example:
+                reason: storage failed
+                explanation: The expenses could not be saved.
+    get:
+      operationId: summarizeExpenses
+      tags: [Expenses]
+      summary: Sumuje wydatki według kategorii i waluty.
+      description: |
+        Zwraca jedną kwotę dla każdego połączenia nazwy kategorii i waluty
+        w podanym zakresie dat płatności. Daty `from` i `to` są włącznie.
+        Ta sama data w obu parametrach oznacza jeden dzień.
+
+        Sumowane są tylko wydatki o tej samej kategorii i tej samej walucie.
+        Waluty nie są przeliczane, a wielkość liter pozostaje bez zmian.
+        Opisy są pomijane. Zakres bez wydatków zwraca HTTP 200 i pustą tablicę.
+        Kolejność elementów nie ma znaczenia. Odczyt nie zmienia danych.
+
+        Suma może przekroczyć `999999.99`, bo dotyczy wielu zapisanych wydatków.
+        Wydatki utworzone z paragonu, także z kategorią `Unknown`, wchodzą do sumy.
+      parameters:
+        - $ref: '#/components/parameters/from'
+        - $ref: '#/components/parameters/to'
+      responses:
+        '200':
+          description: Jedna suma na kategorię i walutę.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CategoryTotal'
+              examples:
+                totals:
+                  value:
+                    - category: Jedzenie
+                      currency: PLN
+                      amount: 48.49
+                    - category: Unknown
+                      currency: EUR
+                      amount: 10
+                empty:
+                  value: []
+        '400':
+          description: |
+            Brak daty, data o długości innej niż 10 znaków, data niebędąca
+            rzeczywistym dniem kalendarzowym albo `from` późniejsze niż `to`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              examples:
+                date:
+                  value:
+                    reason: invalid submission
+                    explanation: A summary date is not a real calendar date.
+                order:
+                  value:
+                    reason: invalid submission
+                    explanation: The first date is after the last date.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          description: Odczyt nie powiódł się. Zapisane wydatki pozostają bez zmian.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              example:
+                reason: storage failed
+                explanation: The expenses could not be read.
+  /api/expense/daily:
+    get:
+      operationId: listDailyExpenses
+      tags: [Expenses]
+      summary: Wymienia wydatki własne i sumy paragonów z jednego dnia.
+      description: |
+        `payment_date` to jeden dzień kalendarzowy. Wynik ma najpierw wydatki
+        bez powiązania z pozycją paragonu, a potem jeden wiersz dla każdego
+        paragonu, który ma wydatki z tą datą.
+
+        Wiersz własny ma `type` równe `expense`, identyfikator wydatku i nazwę
+        kategorii. Wiersz paragonu ma `type` równe `receipt`, identyfikator
+        paragonu i nazwę handlową sprzedawcy. Jego kwota jest sumą wydatków
+        tego paragonu w tym dniu. Wydatki powiązane z pozycją paragonu nie
+        pojawiają się jako osobne wiersze.
+
+        Wiersze własne są uporządkowane po identyfikatorze wydatku. Wiersze
+        paragonów następują po nich i są uporządkowane po identyfikatorze
+        paragonu. Kwoty mają dwa miejsca po przecinku. Waluta i opis są pomijane.
+        Dzień bez wierszy zwraca HTTP 200 i pustą tablicę. Odczyt nie zmienia danych.
+      parameters:
+        - $ref: '#/components/parameters/paymentDate'
+      responses:
+        '200':
+          description: Wydatki własne, a następnie jedna suma na paragon.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DailyExpense'
+              examples:
+                mixed:
+                  value:
+                    - type: expense
+                      date: '2026-10-12'
+                      id: 7
+                      name: Jedzenie
+                      amount: 12.5
+                    - type: receipt
+                      date: '2026-10-12'
+                      id: 42
+                      name: Sklep ABC
+                      amount: 4.99
+                empty:
+                  value: []
+        '400':
+          description: Brak `payment_date` albo wartość, która nie jest rzeczywistym dniem `RRRR-MM-DD`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              example:
+                reason: invalid submission
+                explanation: A payment date is not a real calendar date.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          description: Odczyt nie powiódł się. Zapisane wydatki pozostają bez zmian.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Failure'
+              example:
+                reason: storage failed
+                explanation: The expenses could not be read.
+  /api/expenses:
+    get:
+      operationId: listHouseholdCategories
+      tags: [Expenses]
+      summary: Zwraca nazwy kategorii gospodarstwa.
+      description: |
+        Zwraca 34 nazwy gospodarstwa w kolejności ich identyfikatorów, od
+        `Jedzenie` do `Fermentacja alkoholowa`. Każdy element zawiera tylko `name`.
+        `Unknown` nie wchodzi do listy. Zapis wydatków i paragonów nie zmienia wyniku.
+      responses:
+        '200':
+          description: Nazwy kategorii gospodarstwa, bez `Unknown`.
+          content:
+            application/json:
+              schema:
+                type: array
+                minItems: 34
+                maxItems: 34
+                items:
+                  $ref: '#/components/schemas/CategoryName'
+              example:
+                - name: Jedzenie
+                - name: Jedzenie na mieście
+                - name: Browar
+                - name: Kwiatki
+                - name: Bilet ZTM
+                - name: Wyjazdy
+                - name: Telefon
+                - name: Kino
+                - name: Słodycze
+                - name: Lekarstwa/suplementy
+                - name: Przybory toal.
+                - name: Alkohol inny
+                - name: Lekarze
+                - name: Łachy
+                - name: Multimedia
+                - name: Inne wydatki
+                - name: Materiały biurowe
+                - name: Pieniądze, po prostu…
+                - name: Książki i gazety
+                - name: Rachunki / podatki
+                - name: Przybory czyszczące
+                - name: Naczynia,kuchnia
+                - name: Narzędzia/mat. Eksploatacyjne
+                - name: Numizmatyka
+                - name: Elektronika
+                - name: Dzieciaki
+                - name: Samochód
+                - name: Strzelectwo
+                - name: Ofiary/darowizny
+                - name: Przesyłki pocztowe/kurier
+                - name: Oszczędności
+                - name: Dom/remonty
+                - name: Opakowania (torby, butelki)
+                - name: Fermentacja alkoholowa
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /actuator/health:
+    get:
+      operationId: getHealth
+      tags: [Operations]
+      summary: Sprawdza, czy proces obsługuje ruch.
+      description: |
+        Publiczny endpoint diagnostyczny. Nie wymaga klucza API.
+        Domyślna treść zawiera wyłącznie `status`.
+      security: []
+      responses:
+        '200':
+          description: Proces jest gotowy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: UP
+        '503':
+          description: Proces nie jest gotowy, na przykład z powodu bazy danych.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: DOWN
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Wspólny sekret ze zmiennej środowiskowej `API_KEY`.
+        Nagłówek ma postać `Authorization: Bearer <API_KEY>`.
+  parameters:
+    from:
+      name: from
+      in: query
+      required: true
+      description: Pierwszy dzień zakresu płatności, włącznie. Dokładnie 10 znaków.
+      schema:
+        $ref: '#/components/schemas/CalendarDate'
+      example: '2026-10-01'
+    to:
+      name: to
+      in: query
+      required: true
+      description: Ostatni dzień zakresu płatności, włącznie. Nie może być wcześniejszy niż `from`.
+      schema:
+        $ref: '#/components/schemas/CalendarDate'
+      example: '2026-10-12'
+    paymentDate:
+      name: payment_date
+      in: query
+      required: true
+      description: Dzień płatności, dla którego zwracane są wiersze.
+      schema:
+        $ref: '#/components/schemas/CalendarDate'
+      example: '2026-10-12'
+  responses:
+    Unauthorized:
+      description: |
+        Brak albo niepoprawny klucz API. Ta sama treść niezależnie od tego,
+        czy żądane dane istnieją. Model transkrypcji nie jest wywoływany
+        i nic nie jest zapisywane.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Failure'
+          example:
+            reason: not authorized
+            explanation: A valid API key is required.
+  schemas:
+    Failure:
+      type: object
+      additionalProperties: false
+      required: [reason, explanation]
+      properties:
+        reason:
+          type: string
+          enum:
+            - invalid submission
+            - not authorized
+            - unreadable
+            - incomplete
+            - transcription unavailable
+            - storage failed
+        explanation:
+          type: string
+          minLength: 1
+          description: Angielskie wyjaśnienie konkretnej przyczyny. Nie jest zamkniętą listą.
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN, OUT_OF_SERVICE, UNKNOWN]
+    CalendarDate:
+      type: string
+      format: date
+      minLength: 10
+      maxLength: 10
+      pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      description: |
+        Rzeczywisty dzień kalendarzowy, na przykład `2026-10-12`.
+        `2026-02-31` i zapis bez zer wiodących są odrzucane.
+    TranscriptionRequest:
+      type: object
+      additionalProperties: false
+      required: [images]
+      properties:
+        images:
+          type: array
+          minItems: 1
+          maxItems: 5
+          description: |
+            Strony jednego paragonu. Pole formularza `images` należy powtórzyć
+            dla każdej strony. Jedna część ma najwyżej 10 MB.
+          items:
+            type: string
+            contentMediaType: image/jpeg
+            format: binary
+    ExpenseList:
+      type: array
+      minItems: 1
+      maxItems: 500
+      items:
+        $ref: '#/components/schemas/Expense'
+    Expense:
+      type: object
+      additionalProperties: false
+      required: [amount, paymentDate, category, currency]
+      properties:
+        amount:
+          type: number
+          multipleOf: 0.01
+          minimum: -999999.99
+          maximum: 999999.99
+          description: |
+            Liczba JSON, nie string. Najwyżej dwa miejsca po przecinku.
+            `12.5` jest poprawne i zostaje zapisane ze skalą dwóch miejsc.
+        paymentDate:
+          $ref: '#/components/schemas/CalendarDate'
+        category:
+          $ref: '#/components/schemas/HouseholdCategoryName'
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          description: Dokładnie trzy znaki. Wielkość liter pozostaje bez zmian.
+        description:
+          type: string
+          maxLength: 100
+          description: |
+            Opcjonalny opis. Pusty opis jest pomijany. Opis złożony z samych
+            spacji jest odrzucany. W odpowiedzi pole znika, gdy nie zostało zapisane.
+    CategoryName:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          $ref: '#/components/schemas/HouseholdCategoryName'
+    CategoryTotal:
+      type: object
+      additionalProperties: false
+      required: [category, currency, amount]
+      properties:
+        category:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: Nazwa zapisanej kategorii, łącznie z `Unknown` dla wydatków z paragonu.
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          description: Waluta zapisana przy wydatkach tej sumy. Nie jest przeliczana.
+        amount:
+          type: number
+          multipleOf: 0.01
+          description: Suma kwot tej kategorii i waluty. Skala 2. Może wyjść poza zakres pojedynczego wydatku.
+    DailyExpense:
+      type: object
+      additionalProperties: false
+      required: [type, date, id, name, amount]
+      properties:
+        type:
+          type: string
+          enum: [expense, receipt]
+          description: |
+            `expense` to jeden wydatek bez pozycji paragonu.
+            `receipt` to suma wydatków jednego paragonu w tym dniu.
+        date:
+          $ref: '#/components/schemas/CalendarDate'
+        id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Identyfikator wydatku albo paragonu, zależnie od `type`.
+        name:
+          type: string
+          minLength: 1
+          description: Nazwa kategorii dla `expense` albo nazwa handlowa sprzedawcy dla `receipt`.
+        amount:
+          type: number
+          multipleOf: 0.01
+          description: Kwota wydatku albo suma wydatków paragonu. Skala 2.
+    HouseholdCategoryName:
+      type: string
+      minLength: 1
+      maxLength: 50
+      enum:
+        - Jedzenie
+        - Jedzenie na mieście
+        - Browar
+        - Kwiatki
+        - Bilet ZTM
+        - Wyjazdy
+        - Telefon
+        - Kino
+        - Słodycze
+        - Lekarstwa/suplementy
+        - Przybory toal.
+        - Alkohol inny
+        - Lekarze
+        - Łachy
+        - Multimedia
+        - Inne wydatki
+        - Materiały biurowe
+        - Pieniądze, po prostu…
+        - Książki i gazety
+        - Rachunki / podatki
+        - Przybory czyszczące
+        - Naczynia,kuchnia
+        - Narzędzia/mat. Eksploatacyjne
+        - Numizmatyka
+        - Elektronika
+        - Dzieciaki
+        - Samochód
+        - Strzelectwo
+        - Ofiary/darowizny
+        - Przesyłki pocztowe/kurier
+        - Oszczędności
+        - Dom/remonty
+        - Opakowania (torby, butelki)
+        - Fermentacja alkoholowa
+      description: Dokładna nazwa kategorii gospodarstwa. `Unknown` nie jest dozwolone przy ręcznym wydatku.
+    ReceiptCategoryName:
+      type: string
+      minLength: 1
+      maxLength: 50
+      description: |
+        Kategoria pozycji paragonu. Dozwolone są nazwy gospodarstwa oraz `Unknown`.
+        Transkrypcja zawsze ustawia `Unknown`.
+      enum:
+        - Jedzenie
+        - Jedzenie na mieście
+        - Browar
+        - Kwiatki
+        - Bilet ZTM
+        - Wyjazdy
+        - Telefon
+        - Kino
+        - Słodycze
+        - Lekarstwa/suplementy
+        - Przybory toal.
+        - Alkohol inny
+        - Lekarze
+        - Łachy
+        - Multimedia
+        - Inne wydatki
+        - Materiały biurowe
+        - Pieniądze, po prostu…
+        - Książki i gazety
+        - Rachunki / podatki
+        - Przybory czyszczące
+        - Naczynia,kuchnia
+        - Narzędzia/mat. Eksploatacyjne
+        - Numizmatyka
+        - Elektronika
+        - Dzieciaki
+        - Samochód
+        - Strzelectwo
+        - Ofiary/darowizny
+        - Przesyłki pocztowe/kurier
+        - Oszczędności
+        - Dom/remonty
+        - Opakowania (torby, butelki)
+        - Fermentacja alkoholowa
+        - Unknown
+    Receipt:
+      type: object
+      additionalProperties: false
+      description: |
+        Paragon fiskalny. Grupy wymagane to `documentType`, `seller`, `receipt`,
+        `items`, `taxSummary`, `totals` i `payments`. Grupy opcjonalne to
+        `source`, `discountSummary`, `fiscalData` i `unparsedLines`.
+        Kwoty paragonu są stringami. Transkrypcja pomija `id`, a zapis je nadaje.
+      required: [documentType, seller, receipt, items, taxSummary, totals, payments]
+      properties:
+        id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Nadawane przy zapisie. Pomijane przez transkrypcję. Ignorowane na wejściu zapisu.
+        documentType:
+          type: string
+          const: fiscal_receipt
+        source:
+          $ref: '#/components/schemas/Source'
+        seller:
+          $ref: '#/components/schemas/Seller'
+        receipt:
+          $ref: '#/components/schemas/ReceiptHeader'
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/LineItem'
+        discountSummary:
+          $ref: '#/components/schemas/Discount'
+        taxSummary:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/TaxSummaryEntry'
+        totals:
+          $ref: '#/components/schemas/Totals'
+        payments:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Payment'
+        fiscalData:
+          $ref: '#/components/schemas/FiscalData'
+        unparsedLines:
+          type: array
+          items:
+            type: string
+    Source:
+      type: object
+      additionalProperties: false
+      properties:
+        fileName:
+          type: string
+          description: |
+            Przy transkrypcji nazwy przesłanych plików połączone `, `.
+            Przy zapisie wartość pochodzi z JSON i jest przechowywana.
+        rawText:
+          type: string
+          description: Surowy tekst odczytany ze zdjęcia. Puste wartości są pomijane.
+    Seller:
+      type: object
+      additionalProperties: false
+      required: [tradeName, taxId]
+      properties:
+        tradeName:
+          type: string
+          minLength: 1
+        legalName:
+          type: string
+        taxId:
+          type: string
+          pattern: '^[0-9]{10}$'
+          description: NIP sprzedawcy, dokładnie 10 cyfr.
+        bdoNumber:
+          type: string
+          pattern: '^[0-9]{9}$'
+          description: Opcjonalny numer BDO, dokładnie 9 cyfr.
+        businessAddress:
+          $ref: '#/components/schemas/Address'
+        registeredAddress:
+          $ref: '#/components/schemas/Address'
+    Address:
+      type: object
+      additionalProperties: false
+      required: [street, postalCode, city, countryCode]
+      description: Adres jest opcjonalny. Jeśli występuje, wszystkie jego pola muszą być kompletne.
+      properties:
+        street:
+          type: string
+          minLength: 1
+        postalCode:
+          type: string
+          pattern: '^[0-9]{2}-[0-9]{3}$'
+        city:
+          type: string
+          minLength: 1
+        countryCode:
+          type: string
+          pattern: '^[A-Z]{2}$'
+    ReceiptHeader:
+      type: object
+      additionalProperties: false
+      required: [number, issuedAt, currency]
+      properties:
+        number:
+          type: string
+          minLength: 1
+        issuedAt:
+          type: string
+          format: date-time
+          description: |
+            Data i czas wystawienia. Przy zapisie offset jest odrzucany, a lokalny
+            czas wraca w odpowiedzi z `Z`. Dzień tej lokalnej wartości staje się
+            datą płatności wygenerowanych wydatków.
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          description: Waluta paragonu, dokładnie trzy wielkie litery. Trafia do wygenerowanych wydatków.
+        orderNumber:
+          type: string
+    LineItem:
+      type: object
+      additionalProperties: false
+      required: [description, quantity, unitPrice, total, taxCategory, category]
+      properties:
+        description:
+          type: string
+          minLength: 1
+        itemType:
+          type: string
+          enum: [product, service, packaging, other]
+        quantity:
+          type: number
+          exclusiveMinimum: 0
+        unit:
+          type: string
+        unitPrice:
+          $ref: '#/components/schemas/Money'
+        total:
+          $ref: '#/components/schemas/Money'
+        taxCategory:
+          type: string
+          minLength: 1
+        category:
+          $ref: '#/components/schemas/ReceiptCategoryName'
+        discount:
+          $ref: '#/components/schemas/Discount'
+    Discount:
+      type: object
+      additionalProperties: false
+      required: [description, total]
+      description: |
+        Rabat pozycji albo podsumowanie rabatu paragonu. Kwota jest ujemna.
+        Rabat pozycji zmniejsza kwotę wygenerowanego wydatku. Podsumowanie
+        rabatu paragonu nie tworzy osobnego wydatku.
+      properties:
+        description:
+          type: string
+          minLength: 1
+        total:
+          $ref: '#/components/schemas/NegativeMoney'
+    TaxSummaryEntry:
+      type: object
+      additionalProperties: false
+      required: [taxCategory, taxRate, taxableSales, taxAmount]
+      properties:
+        taxCategory:
+          type: string
+          minLength: 1
+        taxRate:
+          type: number
+          minimum: 0
+          maximum: 100
+        taxableSales:
+          $ref: '#/components/schemas/Money'
+        taxAmount:
+          $ref: '#/components/schemas/Money'
+    Totals:
+      type: object
+      additionalProperties: false
+      required: [taxAmount, grossAmount, amountDue]
+      properties:
+        taxAmount:
+          $ref: '#/components/schemas/Money'
+        grossAmount:
+          $ref: '#/components/schemas/Money'
+        amountDue:
+          $ref: '#/components/schemas/Money'
+    Payment:
+      type: object
+      additionalProperties: false
+      required: [method, amount]
+      properties:
+        method:
+          type: string
+          enum: [cash, card, transfer, voucher, mobile, other]
+        amount:
+          $ref: '#/components/schemas/Money'
+        transactionId:
+          type: string
+    FiscalData:
+      type: object
+      additionalProperties: false
+      properties:
+        cashRegisterCode:
+          type: string
+        cashierCode:
+          type: string
+        fiscalDeviceNumber:
+          type: string
+        verificationHash:
+          type: string
+        rawIdentificationLine:
+          type: string
+    Money:
+      type: string
+      pattern: '^-?[0-9]+\.[0-9]{2}$'
+      description: Kwota paragonu jako string z dokładnie dwoma miejscami po kropce.
+      examples: ['4.99', '-1.50', '0.00']
+    NegativeMoney:
+      type: string
+      pattern: '^-(?:0*[1-9][0-9]*\.[0-9]{2}|0\.[0-9][1-9]|0\.[1-9][0-9])$'
+      description: Kwota rabatu mniejsza od zera, z dokładnie dwoma miejscami po kropce.
+      examples: ['-0.50', '-10.00']
